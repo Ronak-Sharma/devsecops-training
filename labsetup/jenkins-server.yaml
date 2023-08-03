@@ -1,0 +1,147 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Default: ami-0f5ee92e2d63afc18
+  ApplicationName:
+    Type: String
+    Default: Jenkins
+  AssociatePublicIpAddress:
+    AllowedValues:
+      - true
+      - false
+    Default: true
+    Type: String
+  Port:
+    Default: 8080
+    Type: String
+  InstanceType:
+    Default: t2.micro
+    Type: String
+  KeyName:
+    Default: devsecops
+    Type: String
+  PublicSubnet:
+    Type: AWS::EC2::Subnet::Id
+  Stage:
+    Type: String
+    Default: dev
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+
+Resources:
+  SshSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${ApplicationName}-${Stage}-ssh-security-group
+      GroupName: !Sub ${ApplicationName}-${Stage}-ssh-security-group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: "0.0.0.0/0"
+      Tags:
+        - Key: Name
+          Value: !Sub ${ApplicationName}-${Stage}-ssh-security-group
+      VpcId: !Ref VpcId
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${ApplicationName}-${Stage}-web-security-group
+      GroupName: !Sub ${ApplicationName}-${Stage}-web-security-group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref Port
+          ToPort: !Ref Port
+          CidrIp: "0.0.0.0/0"
+          
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+          
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          CidrIp: "0.0.0.0/0"
+      Tags:
+        - Key: Name
+          Value: !Sub ${ApplicationName}-${Stage}-web-security-group
+      VpcId: !Ref VpcId
+      
+  IamRole: 
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub ${ApplicationName}-${AWS::Region}-${Stage}-ec2-iam-role
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Principal: 
+              Service: 
+                - "ec2.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+      
+  RolePolicies: 
+    Type: "AWS::IAM::Policy"
+    Properties: 
+      PolicyName: !Sub ${ApplicationName}-${AWS::Region}-${Stage}-ec2-policy
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action: "*"
+            Resource: "*"
+      Roles: 
+        - Ref: "IamRole"
+        
+  IamInstanceProfile: 
+    Type: "AWS::IAM::InstanceProfile"
+    Properties: 
+      Path: "/"
+      Roles: 
+        - Ref: "IamRole"
+
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      IamInstanceProfile: !Ref IamInstanceProfile
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      BlockDeviceMappings:
+        - DeviceName: /dev/sdb
+          Ebs:
+            VolumeType: gp2
+            DeleteOnTermination: "true"
+            VolumeSize: "20"
+        - DeviceName: /dev/sdk
+          NoDevice: {}
+      Tags:
+        - Key : "Name"
+          Value : !Sub ${ApplicationName}-${Stage}-SecOps
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+          DeviceIndex: 0
+          GroupSet:
+            - Ref: "SshSecurityGroup"
+            - Ref: "WebSecurityGroup"
+          SubnetId: !Ref PublicSubnet
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          sudo file -s /dev/xvdb
+          sudo mkfs -t ext4 /dev/xvdb
+          sudo mkdir -p /jenkins/docker-jenkins
+          sudo mount /dev/xvdb /jenkins/docker-jenkins
+          sudo echo "/dev/xvdb       /jenkins/docker-jenkins   ext4    defaults,nofail        0       0" >> /etc/fstab
+          sudo apt install lsb-release ca-certificates apt-transport-https software-properties-common -y
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+          sudo echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          sudo apt update -y
+          sudo apt install docker-ce -y
+          sudo curl -SL https://github.com/docker/compose/releases/download/v2.5.0/docker-compose-linux-x86_64 -o /usr/bin/docker-compose
+          sudo chmod +x /usr/bin/docker-compose
