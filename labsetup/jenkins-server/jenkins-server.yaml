@@ -146,3 +146,5 @@ Resources:
           sudo curl -SL https://github.com/docker/compose/releases/download/v2.5.0/docker-compose-linux-x86_64 -o /usr/bin/docker-compose
           sudo chmod +x /usr/bin/docker-compose
           sudo usermod -aG docker ubuntu
+          sudo mkdir -p /home/ubuntu/app/ && cd /home/ubuntu/app/
+          git clone https://github.com/Ronak-Sharma/devsecops-training.git
